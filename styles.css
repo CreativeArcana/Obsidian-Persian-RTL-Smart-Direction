@@ -1,0 +1,35 @@
+/* Any Persian word determines the direction of its text block or value. */
+.persian-smart-direction-rtl {
+  direction: rtl !important;
+  text-align: right !important;
+  unicode-bidi: isolate !important;
+}
+
+/* Include adjacent punctuation in the same isolate as the Latin word. */
+.persian-smart-direction-ltr {
+  direction: ltr !important;
+  unicode-bidi: isolate !important;
+}
+
+/* Align only the filename label; keep tree indentation and file icons intact. */
+.nav-file-title-content.persian-smart-direction-rtl {
+  flex-grow: 1;
+  min-width: 0;
+}
+
+.markdown-rendered li.persian-smart-direction-rtl > :is(ul, ol):not([dir]) {
+  direction: initial;
+  text-align: start;
+}
+
+/* Keep comment-only code lines right aligned without changing code statements. */
+pre code .persian-smart-direction-comment-line {
+  display: inline-block;
+  min-width: 100%;
+}
+
+/* Individual property values are independent, including English list values. */
+.metadata-property-value.persian-smart-direction-rtl :is(input, textarea, [contenteditable], .multi-select-pill-content):not(.persian-smart-direction-rtl) {
+  direction: ltr;
+  text-align: start;
+}

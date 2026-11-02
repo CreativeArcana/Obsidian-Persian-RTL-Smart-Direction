@@ -1,0 +1,9 @@
+{
+  "id": "persian-rtl-smart-direction",
+  "name": "Persian RTL Smart Direction",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "Use RTL whenever text contains a Persian word; preserve LTR Latin tokens, symbols, and code, including Persian comments, properties, titles, and file names.",
+  "author": "Fazel Majidfar",
+  "isDesktopOnly": false
+}
