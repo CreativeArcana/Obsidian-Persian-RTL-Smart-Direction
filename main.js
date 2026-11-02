@@ -32,13 +32,41 @@ function analyzeText(text, markdown = true) {
   return { persianWords, latinWords, rtl: persianWords > 0 };
 }
 
-// Keep a Latin token and all adjacent punctuation/symbols in one LTR isolate.
-// Persian punctuation stays with the surrounding sentence. No text is inserted.
+// Keep Latin tokens and their symbols together, without separating bracket pairs
+// across isolates. Mixed-language or multi-word parentheses stay in the parent
+// bidi context so the Unicode bracket-pair algorithm can resolve both ends.
 function latinRanges(text) {
   const ranges = [];
+  const opening = new Map([['(', ')'], ['[', ']'], ['{', '}']]);
+  const closing = new Set(opening.values());
+  const stack = [];
+  const pairs = new Map();
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index];
+    if (opening.has(character)) stack.push({ index, close: opening.get(character) });
+    else if (closing.has(character) && stack.at(-1)?.close === character) {
+      const start = stack.pop().index;
+      pairs.set(start, index);
+      pairs.set(index, start);
+    }
+  }
   const tokens = /[^\s\p{Script=Arabic}\u200c\u200d\u060c\u061b\u061f\u06d4]+/gu;
   for (const token of text.matchAll(tokens)) {
-    if (LATIN_SCRIPT.test(token[0])) ranges.push({ from: token.index, to: token.index + token[0].length });
+    if (!LATIN_SCRIPT.test(token[0])) continue;
+    const end = token.index + token[0].length;
+    let from = token.index;
+    function flush(to) {
+      if (LATIN_SCRIPT.test(text.slice(from, to))) ranges.push({ from, to });
+    }
+    for (let index = from; index < end; index++) {
+      if (!opening.has(text[index]) && !closing.has(text[index])) continue;
+      const paired = pairs.get(index);
+      if (paired === undefined || paired < token.index || paired >= end) {
+        flush(index);
+        from = index + 1;
+      }
+    }
+    flush(end);
   }
   return ranges;
 }

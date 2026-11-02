@@ -1,14 +1,20 @@
 /* Any Persian word determines the direction of its text block or value. */
-.persian-smart-direction-rtl {
-  direction: rtl !important;
-  text-align: right !important;
-  unicode-bidi: isolate !important;
+.persian-smart-direction-rtl,
+.markdown-rendered .persian-smart-direction-rtl,
+.workspace .persian-smart-direction-rtl,
+.markdown-source-view.mod-cm6 .cm-editor .cm-content .cm-line.persian-smart-direction-rtl {
+  direction: rtl;
+  text-align: right;
+  unicode-bidi: isolate;
 }
 
 /* Include adjacent punctuation in the same isolate as the Latin word. */
-.persian-smart-direction-ltr {
-  direction: ltr !important;
-  unicode-bidi: isolate !important;
+.persian-smart-direction-ltr,
+.markdown-rendered .persian-smart-direction-ltr,
+.workspace .persian-smart-direction-ltr,
+.cm-editor .cm-line .persian-smart-direction-ltr {
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
 /* Align only the filename label; keep tree indentation and file icons intact. */
