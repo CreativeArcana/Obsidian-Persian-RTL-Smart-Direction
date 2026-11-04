@@ -4,7 +4,8 @@ const { Plugin } = require('obsidian');
 const RTL_CLASS = 'persian-smart-direction-rtl';
 const LTR_CLASS = 'persian-smart-direction-ltr';
 const COMMENT_CLASS = 'persian-smart-direction-comment';
-const TEXT_BLOCKS = 'p,li,h1,h2,h3,h4,h5,h6,td,th,figcaption';
+const CELL_CLASS = 'persian-smart-direction-cell';
+const TEXT_BLOCKS = 'p,li,h1,h2,h3,h4,h5,h6,td,th,figcaption,.table-cell-wrapper';
 const IGNORED_CONTENT = 'pre,script,style,svg,math,.math,.internal-embed,.metadata-container';
 const UI_FIELDS = '.inline-title,.view-header-title,.workspace-tab-header-inner-title,.nav-file-title-content,.metadata-property-value,.metadata-property-value input,.metadata-property-value textarea,.metadata-property-value [contenteditable],.metadata-property-value .multi-select-pill-content';
 const ARABIC_SCRIPT = /\p{Script=Arabic}/u;
@@ -32,9 +33,9 @@ function analyzeText(text, markdown = true) {
   return { persianWords, latinWords, rtl: persianWords > 0 };
 }
 
-// Keep Latin tokens and their symbols together, without separating bracket pairs
-// across isolates. Mixed-language or multi-word parentheses stay in the parent
-// bidi context so the Unicode bracket-pair algorithm can resolve both ends.
+// A whole English phrase needs ONE isolate: isolating individual words reverses
+// their order in an RTL paragraph. Newlines and table pipes are hard boundaries.
+// Keep bracket pairs together unless they enclose mixed-language text.
 function latinRanges(text) {
   const ranges = [];
   const opening = new Map([['(', ')'], ['[', ']'], ['{', '}']]);
@@ -50,13 +51,18 @@ function latinRanges(text) {
       pairs.set(index, start);
     }
   }
-  const tokens = /[^\s\p{Script=Arabic}\u200c\u200d\u060c\u061b\u061f\u06d4]+/gu;
+  const tokens = /[^\r\n|\ufffc\p{Script=Arabic}\u200c\u200d\u060c\u061b\u061f\u06d4]+/gu;
   for (const token of text.matchAll(tokens)) {
     if (!LATIN_SCRIPT.test(token[0])) continue;
     const end = token.index + token[0].length;
     let from = token.index;
     function flush(to) {
-      if (LATIN_SCRIPT.test(text.slice(from, to))) ranges.push({ from, to });
+      const phrase = text.slice(from, to);
+      const trimmed = phrase.trim();
+      if (LATIN_SCRIPT.test(trimmed)) {
+        const start = from + phrase.indexOf(trimmed);
+        ranges.push({ from: start, to: start + trimmed.length });
+      }
     }
     for (let index = from; index < end; index++) {
       if (!opening.has(text[index]) && !closing.has(text[index])) continue;
@@ -213,24 +219,58 @@ function toggleRtl(element, rtl) {
   return 1;
 }
 
-function clearIsolates(root) {
-  for (const span of root.querySelectorAll('.' + LTR_CLASS)) span.replaceWith(...span.childNodes);
+function clearIsolates(root, ownOnly = false) {
+  for (const span of root.querySelectorAll('.' + LTR_CLASS)) {
+    const nested = span.closest('ul,ol,' + IGNORED_CONTENT);
+    if (ownOnly && nested && root.contains(nested)) continue;
+    span.replaceWith(...span.childNodes);
+  }
   root.normalize();
 }
 
-// Reading View only: wrap text ranges without changing textContent or Markdown.
+// Rendered prose and inactive table cells only; never rewrite editable CM DOM.
 function isolateLatin(root) {
-  const walker = root.ownerDocument.createTreeWalker(root, 4);
+  const existing = new Map();
+  const ranges = [];
   let text = '';
-  while (walker.nextNode()) {
-    const node = walker.currentNode;
-    const parent = node.parentElement;
-    const nestedList = parent.closest('ul,ol');
-    const excluded = parent.closest('.' + LTR_CLASS + ',' + IGNORED_CONTENT + ',[contenteditable="true"]') ||
-      nestedList && root.contains(nestedList);
-    text += excluded ? ' '.repeat(node.length) : node.nodeValue;
+  let offset = 0;
+  let start = 0;
+  function flush() {
+    for (const range of latinRanges(text)) ranges.push({ from: start + range.from, to: start + range.to });
+    text = '';
+    start = offset;
   }
-  for (const range of latinRanges(text).reverse()) {
+  function visit(node, excluded = false) {
+    if (node.nodeType === 3) {
+      const mark = node.parentElement.closest('.' + LTR_CLASS);
+      if (!excluded && mark && root.contains(mark)) {
+        const range = existing.get(mark);
+        if (range) range.to = offset + node.length;
+        else existing.set(mark, { from: offset, to: offset + node.length });
+      }
+      if (!excluded) text += node.nodeValue;
+      offset += node.length;
+      if (excluded) start = offset;
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    const boundary = node !== root && node.matches(TEXT_BLOCKS + ',div,br,ul,ol');
+    const editable = node.getAttribute('contenteditable');
+    const skip = excluded || node.matches(IGNORED_CONTENT) || editable === '' || editable === 'true' || editable === 'plaintext-only' ||
+      node !== root && node.matches('ul,ol,[dir]:not(.' + LTR_CLASS + ')');
+    if (boundary || skip) flush();
+    for (const child of node.childNodes) visit(child, skip);
+    if (boundary || skip) flush();
+  }
+  visit(root);
+  flush();
+  const current = [...existing.values()];
+  if (current.length === ranges.length && ranges.every((range, index) => range.from === current[index].from && range.to === current[index].to)) return;
+  if (existing.size) {
+    for (const mark of existing.keys()) mark.replaceWith(...mark.childNodes);
+    root.normalize();
+  }
+  for (const range of ranges.reverse()) {
     const span = wrapTextRange(root, range.from, range.to, LTR_CLASS);
     if (span) span.dir = 'ltr';
   }
@@ -307,10 +347,17 @@ function applyReadingDirections(root) {
   for (const element of elements) {
     const ignored = element.closest(IGNORED_CONTENT);
     const explicit = element.closest('[dir="ltr"],[dir="rtl"]');
-    const rtl = !ignored && !explicit && analyzeText(ownText(element), false).rtl;
+    // Live Preview generates dir attributes on the table widget and its cells.
+    // These are editor defaults, not an explicit direction in the user's HTML.
+    const widget = element.closest('.cm-table-widget');
+    const generated = widget && (explicit === widget || explicit?.matches('td,th'));
+    const cell = element.matches('td,th,.table-cell-wrapper');
+    const managedCell = cell && !ignored && (!explicit || generated);
+    element.classList.toggle(CELL_CLASS, !!managedCell);
+    const rtl = !ignored && (!explicit || generated) && analyzeText(ownText(element), false).rtl;
     changed += toggleRtl(element, rtl);
     if (rtl) isolateLatin(element);
-    else if (element.querySelector('.' + LTR_CLASS)) clearIsolates(element);
+    else if (element.querySelector('.' + LTR_CLASS)) clearIsolates(element, true);
   }
   applyCodeDirections(root);
   return changed;
@@ -385,7 +432,9 @@ class PersianSmartDirection extends Plugin {
     this.observer = new MutationObserver(mutations => {
       if (mutations.some(mutation => {
         const element = mutation.target.nodeType === 1 ? mutation.target : mutation.target.parentElement;
-        return !element?.closest('.cm-editor') || element?.closest('.metadata-container,.inline-title');
+        return !element?.closest('.cm-editor') || element?.closest('.metadata-container,.inline-title,.table-cell-wrapper') ||
+          [...mutation.addedNodes].some(node => node.nodeType === 1 &&
+            (node.matches('.cm-table-widget,.table-cell-wrapper') || node.querySelector('.cm-table-widget,.table-cell-wrapper')));
       })) this.scheduleRefresh();
     });
     this.observer.observe(root, { subtree: true, childList: true, characterData: true });
@@ -408,10 +457,14 @@ class PersianSmartDirection extends Plugin {
     const root = this.app.workspace.containerEl;
     this.observer?.disconnect();
     for (const span of root.querySelectorAll('.' + COMMENT_CLASS)) { clearIsolates(span); span.replaceWith(...span.childNodes); }
-    for (const span of root.querySelectorAll('.' + LTR_CLASS + ':not(.cm-editor *)')) span.replaceWith(...span.childNodes);
+    for (const span of root.querySelectorAll('.' + LTR_CLASS)) {
+      const editable = span.closest('[contenteditable]');
+      if (!span.closest('.cm-editor') || editable?.getAttribute('contenteditable') === 'false') span.replaceWith(...span.childNodes);
+    }
     root.querySelectorAll('.' + RTL_CLASS).forEach(element => element.classList.remove(RTL_CLASS));
+    root.querySelectorAll('.' + CELL_CLASS).forEach(element => element.classList.remove(CELL_CLASS));
   }
 }
 
 module.exports = PersianSmartDirection;
-module.exports.helpers = { analyzeText, classifyDocument, documentDirections, latinRanges, codeComments, applyReadingDirections, applyUiDirections, ownText, createEditorExtension, RTL_CLASS, LTR_CLASS, COMMENT_CLASS };
+module.exports.helpers = { analyzeText, classifyDocument, documentDirections, latinRanges, codeComments, applyReadingDirections, applyUiDirections, ownText, createEditorExtension, RTL_CLASS, LTR_CLASS, COMMENT_CLASS, CELL_CLASS };

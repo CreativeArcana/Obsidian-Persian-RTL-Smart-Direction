@@ -1,14 +1,22 @@
+/* Each table cell has its own base direction, including English-only cells. */
+.markdown-rendered :is(td, th, .table-cell-wrapper).persian-smart-direction-cell {
+  direction: ltr;
+  text-align: start;
+  unicode-bidi: isolate;
+}
+
 /* Any Persian word determines the direction of its text block or value. */
 .persian-smart-direction-rtl,
 .markdown-rendered .persian-smart-direction-rtl,
 .workspace .persian-smart-direction-rtl,
-.markdown-source-view.mod-cm6 .cm-editor .cm-content .cm-line.persian-smart-direction-rtl {
+.markdown-source-view.mod-cm6 .cm-editor .cm-content .cm-line.persian-smart-direction-rtl,
+.markdown-rendered :is(td, th, .table-cell-wrapper).persian-smart-direction-cell.persian-smart-direction-rtl {
   direction: rtl;
   text-align: right;
   unicode-bidi: isolate;
 }
 
-/* Include adjacent punctuation in the same isolate as the Latin word. */
+/* Keep the entire English phrase and its punctuation in one LTR isolate. */
 .persian-smart-direction-ltr,
 .markdown-rendered .persian-smart-direction-ltr,
 .workspace .persian-smart-direction-ltr,
