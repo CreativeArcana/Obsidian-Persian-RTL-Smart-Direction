@@ -12,6 +12,8 @@ This plugin automatically detects Persian/Arabic content and adjusts the text di
 - **Full Support:** Works in Reading View, Live Preview, and Source Mode.
 - **Code Comments:** Properly handles RTL in code comments while keeping syntax intact.
 - **English Phrases:** Keeps consecutive English words in one LTR span within Persian sentences.
+- **Sentence Punctuation:** Keeps sentence periods in RTL reading order and list numbers separate from English phrases.
+- **Plain Text Blocks:** Applies RTL to Persian content in `text`, `txt`, `plain`, and `plaintext` code fences.
 - **Tables:** Detects each cell independently in Reading View and Live Preview, including English words at the end of Persian text.
 - **Non-destructive:** Does not modify your underlying Markdown files or metadata.
 - **Lightweight:** No external dependencies or network required.

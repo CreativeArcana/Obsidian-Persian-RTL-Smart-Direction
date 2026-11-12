@@ -4,6 +4,13 @@ All notable changes to this plugin will be documented in this file.
 
 ---
 
+## [1.0.3] - 2026-November-12
+
+### Fixed
+- Applied RTL to Persian content in plain-text code fences.
+- Corrected sentence periods before English-led sentences and after final English words.
+- Separated ordered-list numbers from English phrases, keeping periods to the left of numbers in RTL items.
+
 ## [1.0.2] - 2026-November-04
 
 ### Fixed

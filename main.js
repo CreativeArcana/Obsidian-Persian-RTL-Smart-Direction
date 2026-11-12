@@ -1,6 +1,6 @@
 'use strict';
 
-const { Plugin } = require('obsidian');
+const { Plugin, MarkdownRenderer } = require('obsidian');
 const RTL_CLASS = 'persian-smart-direction-rtl';
 const LTR_CLASS = 'persian-smart-direction-ltr';
 const COMMENT_CLASS = 'persian-smart-direction-comment';
@@ -11,6 +11,7 @@ const UI_FIELDS = '.inline-title,.view-header-title,.workspace-tab-header-inner-
 const ARABIC_SCRIPT = /\p{Script=Arabic}/u;
 const LATIN_SCRIPT = /\p{Script=Latin}/u;
 const WORDS = /[\p{L}\p{M}]+(?:[\u200c\u200d][\p{L}\p{M}]+)*/gu;
+const PLAIN_TEXT_LANGUAGE = /^(?:text|txt|plain|plaintext)$/i;
 
 function visibleText(text) {
   return text
@@ -36,8 +37,15 @@ function analyzeText(text, markdown = true) {
 // A whole English phrase needs ONE isolate: isolating individual words reverses
 // their order in an RTL paragraph. Newlines and table pipes are hard boundaries.
 // Keep bracket pairs together unless they enclose mixed-language text.
-function latinRanges(text) {
+function latinRanges(text, markdown = false) {
   const ranges = [];
+  // A list marker belongs to the RTL list, not to its first English phrase.
+  // Leave the marker in that RTL context so its dot sits LEFT of the number.
+  let contentFrom = 0;
+  if (markdown) {
+    const prefix = text.match(/^([ \t]*(?:>[ \t]*)*)(?:(\d+[.)])|[-+*])[ \t]+(?:\[[ xX]\][ \t]+)?/);
+    if (prefix) contentFrom = prefix[0].length;
+  }
   const opening = new Map([['(', ')'], ['[', ']'], ['{', '}']]);
   const closing = new Set(opening.values());
   const stack = [];
@@ -55,14 +63,28 @@ function latinRanges(text) {
   for (const token of text.matchAll(tokens)) {
     if (!LATIN_SCRIPT.test(token[0])) continue;
     const end = token.index + token[0].length;
-    let from = token.index;
+    let from = Math.max(token.index, contentFrom);
     function flush(to) {
       const phrase = text.slice(from, to);
-      const trimmed = phrase.trim();
-      if (LATIN_SCRIPT.test(trimmed)) {
-        const start = from + phrase.indexOf(trimmed);
-        ranges.push({ from: start, to: start + trimmed.length });
+      // Sentence periods stay in the surrounding RTL context. Dots within
+      // filenames, URLs, decimals and identifiers remain part of the LTR run.
+      const stops = /\.(?=\s|$|[`*_]+(?:\s|$))/g;
+      let start = 0;
+      function add(end) {
+        const part = phrase.slice(start, end);
+        const trimmed = part.trim();
+        if (LATIN_SCRIPT.test(trimmed)) {
+          const offset = from + start + part.indexOf(trimmed);
+          ranges.push({ from: offset, to: offset + trimmed.length });
+        }
       }
+      for (const stop of phrase.matchAll(stops)) {
+        const position = from + stop.index;
+        // A full English bracket pair must not be split across isolates.
+        const enclosed = [...pairs].some(([open, close]) => open >= from && close < to && open < position && position < close);
+        if (!enclosed) { add(stop.index); start = stop.index + 1; }
+      }
+      add(phrase.length);
     }
     for (let index = from; index < end; index++) {
       if (!opening.has(text[index]) && !closing.has(text[index])) continue;
@@ -153,6 +175,10 @@ function documentDirections(documentText) {
   }
   function flushCode() {
     if (!fence) return;
+    if (PLAIN_TEXT_LANGUAGE.test(fence.language)) {
+      for (const line of fence.lines) if (analyzeText(line.text, false).rtl) rtlLines.add(line.number);
+      return;
+    }
     for (const [offset, ranges] of codeComments(fence.lines.map(line => line.text), fence.language)) {
       const line = fence.lines[offset];
       comments.set(line.number, ranges);
@@ -314,7 +340,8 @@ function applyCodeDirections(root) {
     const lines = text.split('\n');
     const ranges = [];
     let offset = 0;
-    const comments = codeComments(lines, language);
+    const prose = !language || PLAIN_TEXT_LANGUAGE.test(language);
+    const comments = PLAIN_TEXT_LANGUAGE.test(language) ? new Map() : codeComments(lines, language);
     for (let index = 0; index < lines.length; index++) {
       for (const range of comments.get(index) || []) ranges.push({
         ...range,
@@ -322,7 +349,7 @@ function applyCodeDirections(root) {
         to: offset + (range.standalone ? lines[index].length : range.to),
       });
       // Indented Markdown prose is rendered as a plain code block by Markdown.
-      if (!language && !comments.has(index) && analyzeText(lines[index], false).rtl) ranges.push({ from: offset, to: offset + lines[index].length, standalone: true });
+      if (prose && !comments.has(index) && analyzeText(lines[index], false).rtl) ranges.push({ from: offset, to: offset + lines[index].length, standalone: true });
       offset += lines[index].length + 1;
     }
     for (const range of ranges.reverse()) {
@@ -400,7 +427,7 @@ function createEditorExtension() {
               marks.push(mark); isolates.push(mark);
             }
             const segments = rtl ? [{ from: 0, to: line.length }] : comments;
-            for (const segment of segments) for (const token of latinRanges(line.text.slice(segment.from, segment.to))) {
+            for (const segment of segments) for (const token of latinRanges(line.text.slice(segment.from, segment.to), !comments.length)) {
               const mark = Decoration.mark({ class: LTR_CLASS, attributes: { dir: 'ltr' }, bidiIsolate: Direction?.LTR ?? 0 }).range(line.from + segment.from + token.from, line.from + segment.from + token.to);
               marks.push(mark); isolates.push(mark);
             }
@@ -467,4 +494,4 @@ class PersianSmartDirection extends Plugin {
 }
 
 module.exports = PersianSmartDirection;
-module.exports.helpers = { analyzeText, classifyDocument, documentDirections, latinRanges, codeComments, applyReadingDirections, applyUiDirections, ownText, createEditorExtension, RTL_CLASS, LTR_CLASS, COMMENT_CLASS, CELL_CLASS };
+module.exports.helpers = { analyzeText, classifyDocument, documentDirections, latinRanges, codeComments, applyReadingDirections, applyUiDirections, ownText, createEditorExtension, RTL_CLASS, LTR_CLASS, COMMENT_CLASS, CELL_CLASS, MarkdownRenderer };
